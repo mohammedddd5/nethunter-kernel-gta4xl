@@ -8,7 +8,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Maximize Build Space
-        uses: easimon/maximize-build-space@main
+        uses: easimon/maximize-build-space@v8
         with:
           root-reserve-mb: 5120
           swap-size-mb: 1024
@@ -44,15 +44,12 @@ jobs:
             echo "Modifying clock frequencies and voltage steps in: $DVFS_FILE"
             
             # 1. Modify Big Clusters to push higher clock limits (e.g., Target 2.4GHz+)
-            # Using sed to find the maximum standard frequency step and bump it up
             sed -i 's/khz = <2301000>/khz = <2405000>/g' "$DVFS_FILE"
             
             # 2. Overvolt Step Adjustment (Increasing maximum voltage delta to sustain the clock)
-            # Standard maximums are usually around 1150000uV (1.15V). We bump to a stable delta limit like 1.22V
             sed -i 's/volt = <1150000>/volt = <1225000>/g' "$DVFS_FILE"
             
             # 3. Add an extreme performance profile step if needed
-            # (Modifies the frequency table array entries directly)
             sed -i 's/opp-microvolt = <1150000>/opp-microvolt = <1225000>/g' "$DVFS_FILE"
             
             echo "Successfully injected custom hardware profiles!"
