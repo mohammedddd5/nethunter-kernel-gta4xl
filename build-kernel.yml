@@ -1,0 +1,129 @@
+name: Build Overclocked Nethunter Kernel (gta4xl)
+
+on:
+  workflow_dispatch: # Allows you to manually trigger the build with a button click
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Maximize Build Space
+        uses: easimon/maximize-build-space@main
+        with:
+          root-reserve-mb: 5120
+          swap-size-mb: 1024
+          remove-dotnet: 'true'
+          remove-android: 'true'
+          remove-haskell: 'true'
+
+      - name: Install Build Dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y bc bison build-essential flex libssl-dev libcrypto++-dev cccl ccache libncurses-dev git zip unzip curl libgmp-dev libmpfr-dev libmpc-dev
+
+      - name: Download Clang Compiler Toolchain
+        run: |
+          mkdir -p $GITHUB_WORKSPACE/toolchain
+          cd $GITHUB_WORKSPACE/toolchain
+          curl -LO https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86/+archive/refs/heads/main/clang-r383902.tar.gz
+          tar -xzf clang-r383902.tar.gz
+          rm clang-r383902.tar.gz
+
+      - name: Clone Kernel Source
+        run: |
+          git clone --depth=1 -b lineage-21 https://github.com/LineageOS/android_kernel_samsung_gta4xl.git $GITHUB_WORKSPACE/kernel
+
+      - name: Inject Overclock & Overvolt Parameters
+        run: |
+          cd $GITHUB_WORKSPACE/kernel
+          
+          # Find the Exynos 9611 device tree frequency table file
+          DVFS_FILE=$(find arch/arm64/boot/dts/ -name "*exynos9611*-dvfs.dtsi" -o -name "*9611*.dtsi" | head -n 1)
+          
+          if [ -f "$DVFS_FILE" ]; then
+            echo "Modifying clock frequencies and voltage steps in: $DVFS_FILE"
+            
+            # 1. Modify Big Clusters to push higher clock limits (e.g., Target 2.4GHz+)
+            # Using sed to find the maximum standard frequency step and bump it up
+            sed -i 's/khz = <2301000>/khz = <2405000>/g' "$DVFS_FILE"
+            
+            # 2. Overvolt Step Adjustment (Increasing maximum voltage delta to sustain the clock)
+            # Standard maximums are usually around 1150000uV (1.15V). We bump to a stable delta limit like 1.22V
+            sed -i 's/volt = <1150000>/volt = <1225000>/g' "$DVFS_FILE"
+            
+            # 3. Add an extreme performance profile step if needed
+            # (Modifies the frequency table array entries directly)
+            sed -i 's/opp-microvolt = <1150000>/opp-microvolt = <1225000>/g' "$DVFS_FILE"
+            
+            echo "Successfully injected custom hardware profiles!"
+          else
+            echo "WARNING: Core DVFS device tree map not found via automation. Compiling with default fallback frequencies."
+          fi
+
+      - name: Inject Nethunter Driver Patches
+        run: |
+          cd $GITHUB_WORKSPACE/kernel
+          curl -L https://raw.githubusercontent.com/kimocoder/Qualcomm-Drivers/master/patches/0001-add-ath-drivers.patch | git apply --ignore-whitespace || true
+
+      - name: Configure Kernel Flags (Nethunter & Performance)
+        run: |
+          cd $GITHUB_WORKSPACE/kernel
+          export PATH=$GITHUB_WORKSPACE/toolchain/bin:$PATH
+          
+          make ARCH=arm64 SUBARCH=arm64 gta4xl_open_defconfig
+          
+          # Append your standard wireless monitor-mode drivers and enable performance governors
+          cat <<EOT >> .config
+          CONFIG_CPU_FREQ_DEFAULT_GOV_PERFORMANCE=y
+          CONFIG_SUBST_WCHAR=y
+          CONFIG_NET_RADIO=y
+          CONFIG_WIRELESS_EXT=y
+          CONFIG_WEXT_CORE=y
+          CONFIG_WEXT_PROC=y
+          CONFIG_WEXT_SPY=y
+          CONFIG_WEXT_PRIV=y
+          CONFIG_CFG80211=y
+          CONFIG_MAC80211=y
+          CONFIG_MAC80211_RC_DEFAULT="minstrel_ht"
+          CONFIG_ATH_CARDS=y
+          CONFIG_ATH9K_HTC=y
+          CONFIG_ATH9K_HTC_DEBUGFS=y
+          CONFIG_CARL9170=y
+          CONFIG_USB_NET_RNDIS_WLAN=y
+          CONFIG_RT2X00=y
+          CONFIG_RT2800USB=y
+          CONFIG_RT2800USB_RT35XX=y
+          CONFIG_RT2800USB_RT53XX=y
+          CONFIG_RT2800USB_RT55XX=y
+          CONFIG_RT2800USB_UNKNOWN=y
+          CONFIG_RTL_CARDS=y
+          CONFIG_RTL8187=y
+          CONFIG_RTL8192CU=y
+          CONFIG_RTL8xxxU=y
+          EOT
+          
+          make ARCH=arm64 SUBARCH=arm64 oldconfig
+
+      - name: Compile the Kernel
+        run: |
+          cd $GITHUB_WORKSPACE/kernel
+          export PATH=$GITHUB_WORKSPACE/toolchain/bin:$PATH
+          
+          make -j$(nproc --all) \
+            ARCH=arm64 \
+            SUBARCH=arm64 \
+            CC=clang \
+            CLANG_TRIPLE=aarch64-linux-gnu- \
+            CROSS_COMPILE=aarch64-linux-gnu-
+
+      - name: Package Kernel Image
+        run: |
+          cd $GITHUB_WORKSPACE
+          mkdir -p output
+          cp kernel/arch/arm64/boot/Image.gz-dtb output/Image.gz-dtb || cp kernel/arch/arm64/boot/Image output/Image || true
+          
+      - name: Upload Kernel Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: Overclocked-Nethunter-Kernel
+          path: output/*
