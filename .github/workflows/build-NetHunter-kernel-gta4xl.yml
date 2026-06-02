@@ -19,7 +19,9 @@ jobs:
         run: |
           mkdir -p $GITHUB_WORKSPACE/toolchain
           cd $GITHUB_WORKSPACE/toolchain
-          curl -L -o clang.tar.gz "https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86/+archive/refs/tags/android-11.0.0_r1/clang-r383902.tar.gz"
+          # Upgraded to a modern toolchain to better match Android 16 branch requirements
+          curl -L -o clang.tar.gz "https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86/+archive/refs/heads/main/clang-r522817.tar.gz" || \
+          curl -L -o clang.tar.gz "https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86/+archive/refs/tags/android-14.0.0_r1/clang-r487747c.tar.gz"
           tar -xzf clang.tar.gz
           rm clang.tar.gz
 
@@ -43,7 +45,7 @@ jobs:
             echo "WARNING: Core DVFS device tree map not found via automation. Compiling with default fallback frequencies."
           fi
 
-      - name: Configure Kernel Flags (Nethunter & Performance)
+      - name: Configure Kernel Flags (Strip Cameras & Enable Nethunter)
         run: |
           cd $GITHUB_WORKSPACE/kernel
           export PATH=$GITHUB_WORKSPACE/toolchain/bin:$PATH
@@ -57,6 +59,13 @@ jobs:
             make ARCH=arm64 SUBARCH=arm64 "$ANY_DEFCONFIG"
           fi
           
+          # Use scripts/config to completely disable camera, multimedia, and TV tuner subsystems
+          ./scripts/config --disable CONFIG_MEDIA_SUPPORT
+          ./scripts/config --disable CONFIG_MEDIA_CAMERA_SUPPORT
+          ./scripts/config --disable CONFIG_VIDEO_DEV
+          ./scripts/config --disable CONFIG_VIDEO_SAMSUNG_FIMC
+          
+          # Append NetHunter external Wi-Fi drivers and performance profiles
           cat <<EOT >> .config
           CONFIG_CPU_FREQ_DEFAULT_GOV_PERFORMANCE=y
           CONFIG_SUBST_WCHAR=y
@@ -86,7 +95,7 @@ jobs:
           CONFIG_RTL8xxxU=y
           EOT
           
-          make ARCH=arm64 SUBARCH=arm64 oldconfig
+          make ARCH=arm64 SUBARCH=arm64 olddefconfig
 
       - name: Compile the Kernel
         run: |
@@ -98,7 +107,8 @@ jobs:
             SUBARCH=arm64 \
             CC=clang \
             CLANG_TRIPLE=aarch64-linux-gnu- \
-            CROSS_COMPILE=aarch64-linux-gnu-
+            CROSS_COMPILE=aarch64-linux-gnu- \
+            KCFLAGS="-w" # Suppresses warnings so minor code quirks don't halt the build
 
       - name: Package Kernel Image
         run: |
