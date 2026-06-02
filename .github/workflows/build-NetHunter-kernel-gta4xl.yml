@@ -52,17 +52,21 @@ jobs:
             echo "WARNING: Core DVFS device tree map not found via automation. Compiling with default fallback frequencies."
           fi
 
-      - name: Inject Nethunter Driver Patches
-        run: |
-          cd $GITHUB_WORKSPACE/kernel
-          curl -L https://raw.githubusercontent.com/kimocoder/Qualcomm-Drivers/master/patches/0001-add-ath-drivers.patch | git apply --ignore-whitespace || true
-
       - name: Configure Kernel Flags (Nethunter & Performance)
         run: |
           cd $GITHUB_WORKSPACE/kernel
           export PATH=$GITHUB_WORKSPACE/toolchain/bin:$PATH
           
-          make ARCH=arm64 SUBARCH=arm64 gta4xl_open_defconfig
+          # Check for the precise target configuration name inside the source tree
+          if [ -f "arch/arm64/configs/gta4xl_defconfig" ]; then
+            make ARCH=arm64 SUBARCH=arm64 gta4xl_defconfig
+          elif [ -f "arch/arm64/configs/exynos9611-gta4xl_defconfig" ]; then
+            make ARCH=arm64 SUBARCH=arm64 exynos9611-gta4xl_defconfig
+          else
+            # Automated fallback to find whatever matching defconfig is available
+            ANY_DEFCONFIG=$(ls arch/arm64/configs/ | grep -i gta4xl | head -n 1)
+            make ARCH=arm64 SUBARCH=arm64 "$ANY_DEFCONFIG"
+          fi
           
           # Append your standard wireless monitor-mode drivers and enable performance governors
           cat <<EOT >> .config
