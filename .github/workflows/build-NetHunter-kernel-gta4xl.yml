@@ -1,7 +1,7 @@
 name: Build Overclocked Nethunter Kernel (gta4xl)
 
 on:
-  workflow_dispatch: # Allows you to manually trigger the build with a button click
+  workflow_dispatch:
 
 jobs:
   build:
@@ -13,13 +13,12 @@ jobs:
       - name: Install Build Dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y bc bison build-essential flex libssl-dev libcrypto++-dev ccache libncurses-dev git zip unzip curl libgmp-dev libmpfr-dev libmpc-dev
+          sudo apt-get install -y bc bison build-essential flex libssl-dev libcrypto++-dev ccache libncurses-dev git zip unzip curl libgmp-dev libmpfr-dev libmpc-dev gcc-aarch64-linux-gnu
 
       - name: Download Clang Compiler Toolchain
         run: |
           mkdir -p $GITHUB_WORKSPACE/toolchain
           cd $GITHUB_WORKSPACE/toolchain
-          # Fetching a reliable release-tagged platform toolchain archive directly
           curl -L -o clang.tar.gz "https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86/+archive/refs/tags/android-11.0.0_r1/clang-r383902.tar.gz"
           tar -xzf clang.tar.gz
           rm clang.tar.gz
@@ -32,21 +31,13 @@ jobs:
         run: |
           cd $GITHUB_WORKSPACE/kernel
           
-          # Find the Exynos 9611 device tree frequency table file
           DVFS_FILE=$(find arch/arm64/boot/dts/ -name "*exynos9611*-dvfs.dtsi" -o -name "*9611*.dtsi" | head -n 1)
           
           if [ -f "$DVFS_FILE" ]; then
             echo "Modifying clock frequencies and voltage steps in: $DVFS_FILE"
-            
-            # 1. Modify Big Clusters to push higher clock limits (e.g., Target 2.4GHz+)
             sed -i 's/khz = <2301000>/khz = <2405000>/g' "$DVFS_FILE"
-            
-            # 2. Overvolt Step Adjustment (Increasing maximum voltage delta to sustain the clock)
             sed -i 's/volt = <1150000>/volt = <1225000>/g' "$DVFS_FILE"
-            
-            # 3. Add an extreme performance profile step if needed
             sed -i 's/opp-microvolt = <1150000>/opp-microvolt = <1225000>/g' "$DVFS_FILE"
-            
             echo "Successfully injected custom hardware profiles!"
           else
             echo "WARNING: Core DVFS device tree map not found via automation. Compiling with default fallback frequencies."
@@ -57,18 +48,15 @@ jobs:
           cd $GITHUB_WORKSPACE/kernel
           export PATH=$GITHUB_WORKSPACE/toolchain/bin:$PATH
           
-          # Check for the precise target configuration name inside the source tree
           if [ -f "arch/arm64/configs/gta4xl_defconfig" ]; then
             make ARCH=arm64 SUBARCH=arm64 gta4xl_defconfig
           elif [ -f "arch/arm64/configs/exynos9611-gta4xl_defconfig" ]; then
             make ARCH=arm64 SUBARCH=arm64 exynos9611-gta4xl_defconfig
           else
-            # Automated fallback to find whatever matching defconfig is available
             ANY_DEFCONFIG=$(ls arch/arm64/configs/ | grep -i gta4xl | head -n 1)
             make ARCH=arm64 SUBARCH=arm64 "$ANY_DEFCONFIG"
           fi
           
-          # Append your standard wireless monitor-mode drivers and enable performance governors
           cat <<EOT >> .config
           CONFIG_CPU_FREQ_DEFAULT_GOV_PERFORMANCE=y
           CONFIG_SUBST_WCHAR=y
