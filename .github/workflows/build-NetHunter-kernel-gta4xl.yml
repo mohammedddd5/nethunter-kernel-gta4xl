@@ -19,18 +19,17 @@ jobs:
         run: |
           git clone --depth=1 -b lineage-23.2 https://github.com/LineageOS/android_kernel_samsung_gta4xl.git $GITHUB_WORKSPACE/kernel
 
-      - name: Patch Kernel Headers for Modern Clang
+      - name: Pre-Build Header Patches
         run: |
           cd $GITHUB_WORKSPACE/kernel
-          # 1. Fix the double-void declaration in nmi.h
+          # 1. Fix double void syntax
           sed -i 's/static inline void void/static inline void/g' include/linux/nmi.h
-          # 2. Add ZONE_DMA definition to mmzone.h to fix undeclared identifier
+          # 2. Add ZONE_DMA to mmzone.h to fix compilation error
           sed -i '/#define _LINUX_MMZONE_H/a #define ZONE_DMA 0' include/linux/mmzone.h
 
       - name: Inject Overclock
         run: |
           cd $GITHUB_WORKSPACE/kernel
-          # Patching the specific file found in your logs
           TARGET_FILE="arch/arm64/boot/dts/samsung/exynos9611-gta4xlwifi_eur_open_gpio_05.dtsi"
           if [ -f "$TARGET_FILE" ]; then
             sed -i 's/2301000/2405000/g' "$TARGET_FILE"
@@ -41,7 +40,7 @@ jobs:
         run: |
           cd $GITHUB_WORKSPACE/kernel
           
-          # Standard Android Build Variables
+          # Environment variables
           export ARCH=arm64
           export SUBARCH=arm64
           export CROSS_COMPILE=aarch64-linux-gnu-
@@ -50,11 +49,14 @@ jobs:
           export LLVM_IAS=1
           export CLANG_TRIPLE=aarch64-linux-gnu-
           
-          # Force use of the exynos9611 target configuration
+          # Configure
           make ARCH=arm64 exynos9611_defconfig
           
-          # KCFLAGS to silence warnings and bypass errors
-          export KCFLAGS="-w -Wno-error -fno-integrated-as"
+          # KCFLAGS: 
+          # -std=gnu89: Forces the compiler to use the older standard that matches your kernel source
+          # -Wno-error: Ignores compilation warnings that would otherwise stop the build
+          # -fno-integrated-as: Uses GNU assembler for compatibility
+          export KCFLAGS="-w -Wno-error -std=gnu89 -fno-integrated-as"
           
           # Build
           make -j$(nproc) ARCH=arm64
