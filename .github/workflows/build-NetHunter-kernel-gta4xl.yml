@@ -5,7 +5,7 @@ on:
 
 jobs:
   build:
-    runs-on: ubuntu-24.04 # Android 16 requires the latest headers provided by Ubuntu 24.04
+    runs-on: ubuntu-24.04
     steps:
       - name: Checkout Repository
         uses: actions/checkout@v4
@@ -17,24 +17,28 @@ jobs:
 
       - name: Clone Kernel Source
         run: |
-          # Ensure we are pulling the correct branch for Android 16
           git clone --depth=1 -b lineage-23.2 https://github.com/LineageOS/android_kernel_samsung_gta4xl.git $GITHUB_WORKSPACE/kernel
 
       - name: Inject Overclock & Thermal Bypasses
         run: |
           cd $GITHUB_WORKSPACE/kernel
-          # Frequency/Volt Injection
-          DVFS_FILE=$(find arch/arm64/boot/dts/ -name "*exynos9611*-dvfs.dtsi" | head -n 1)
-          sed -i 's/2301000/2405000/g' "$DVFS_FILE"
-          sed -i 's/1150000/1225000/g' "$DVFS_FILE"
-          # Thermal Bypass
-          find arch/arm64/boot/dts/ -name "*.dtsi" | xargs sed -i 's/temperature = <[0-9]*>/temperature = <125000>/g'
+          
+          # 1. Targeted Overclock Injection
+          # We search for any dtsi containing dvfs and verify the file before modifying
+          find . -name "*dvfs*.dtsi" -exec sed -i 's/2301000/2405000/g' {} +
+          find . -name "*dvfs*.dtsi" -exec sed -i 's/1150000/1225000/g' {} +
+          
+          # 2. Thermal Bypass
+          # Only target files that actually have thermal-zones to avoid "no such file" errors
+          find . -type f -name "*.dtsi" -exec grep -l "thermal-zones" {} + | while read -r file; do
+            sed -i 's/temperature = <[0-9]*>/temperature = <125000>/g' "$file"
+          done
 
       - name: Compile the Kernel
         run: |
           cd $GITHUB_WORKSPACE/kernel
           
-          # Use modern build flags for Android 16
+          # Environment variables for Android 16/LLVM build
           export ARCH=arm64
           export SUBARCH=arm64
           export CROSS_COMPILE=aarch64-linux-gnu-
@@ -42,17 +46,18 @@ jobs:
           export LLVM=1
           export LLVM_IAS=1
           
-          # Configuration
-          make gta4xl_defconfig
+          # Dynamically locate the defconfig
+          DEFCONFIG=$(find arch/arm64/configs/ -name "*gta4xl*_defconfig" | head -n 1)
+          make "$DEFCONFIG"
           
-          # Disable problematic drivers that crash on Android 16
+          # Disable problematic drivers
           ./scripts/config --disable CONFIG_MEDIA_SUPPORT
           
-          # Build
+          # Build with adaptive parallel jobs
           make -j$(nproc) KCFLAGS="-w"
 
       - name: Upload Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: Android-16-Kernel
+          name: Android-16-Kernel-Build
           path: kernel/arch/arm64/boot/Image.gz-dtb
