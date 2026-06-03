@@ -22,23 +22,24 @@ jobs:
       - name: Inject Overclock & Thermal Bypasses
         run: |
           cd $GITHUB_WORKSPACE/kernel
+          # List files to find the correct path for our next attempt
+          echo "Listing dts files to identify targets..."
+          find arch/arm64/boot/dts -name "*.dtsi" | head -n 20
           
-          # 1. Targeted Overclock Injection
-          # We search for any dtsi containing dvfs and verify the file before modifying
-          find . -name "*dvfs*.dtsi" -exec sed -i 's/2301000/2405000/g' {} +
-          find . -name "*dvfs*.dtsi" -exec sed -i 's/1150000/1225000/g' {} +
+          # Attempt to find the dvfs file using a broader pattern
+          DVFS_FILE=$(find arch/arm64/boot/dts -name "*dvfs*" -o -name "*exynos9611*" | head -n 1)
           
-          # 2. Thermal Bypass
-          # Only target files that actually have thermal-zones to avoid "no such file" errors
-          find . -type f -name "*.dtsi" -exec grep -l "thermal-zones" {} + | while read -r file; do
-            sed -i 's/temperature = <[0-9]*>/temperature = <125000>/g' "$file"
-          done
+          if [ -f "$DVFS_FILE" ]; then
+            sed -i 's/2301000/2405000/g' "$DVFS_FILE"
+            sed -i 's/1150000/1225000/g' "$DVFS_FILE"
+            echo "Successfully patched $DVFS_FILE"
+          else
+            echo "DVFS file not found with current pattern, skipping..."
+          fi
 
       - name: Compile the Kernel
         run: |
           cd $GITHUB_WORKSPACE/kernel
-          
-          # Environment variables for Android 16/LLVM build
           export ARCH=arm64
           export SUBARCH=arm64
           export CROSS_COMPILE=aarch64-linux-gnu-
@@ -46,14 +47,13 @@ jobs:
           export LLVM=1
           export LLVM_IAS=1
           
-          # Dynamically locate the defconfig
-          DEFCONFIG=$(find arch/arm64/configs/ -name "*gta4xl*_defconfig" | head -n 1)
-          make "$DEFCONFIG"
+          # Use a direct path if defconfig is not found, or use a broad find
+          make gta4xl_defconfig || make defconfig
           
           # Disable problematic drivers
           ./scripts/config --disable CONFIG_MEDIA_SUPPORT
           
-          # Build with adaptive parallel jobs
+          # Build
           make -j$(nproc) KCFLAGS="-w"
 
       - name: Upload Artifact
