@@ -19,28 +19,29 @@ jobs:
         run: |
           git clone --depth=1 -b lineage-23.2 https://github.com/LineageOS/android_kernel_samsung_gta4xl.git $GITHUB_WORKSPACE/kernel
 
-      - name: Patch Kernel Headers
+      - name: Patch Kernel Headers for Modern Clang
         run: |
           cd $GITHUB_WORKSPACE/kernel
-          # Fix the void void error
-          sed -i 's/static inline void void sl_softirq_entry/static inline void sl_softirq_entry/g' include/linux/nmi.h
-          # Fix the missing ZONE_DMA definition by appending it if missing
-          echo "#define ZONE_DMA 0" >> include/linux/mmzone.h
+          # 1. Fix the double-void declaration in nmi.h
+          sed -i 's/static inline void void/static inline void/g' include/linux/nmi.h
+          # 2. Add ZONE_DMA definition to mmzone.h to fix undeclared identifier
+          sed -i '/#define _LINUX_MMZONE_H/a #define ZONE_DMA 0' include/linux/mmzone.h
 
       - name: Inject Overclock
         run: |
           cd $GITHUB_WORKSPACE/kernel
-          DVFS_FILE=$(find arch/arm64/boot/dts -name "*dvfs*" -o -name "*exynos9611*" | head -n 1)
-          if [ -f "$DVFS_FILE" ]; then
-            sed -i 's/2301000/2405000/g' "$DVFS_FILE"
-            sed -i 's/1150000/1225000/g' "$DVFS_FILE"
+          # Patching the specific file found in your logs
+          TARGET_FILE="arch/arm64/boot/dts/samsung/exynos9611-gta4xlwifi_eur_open_gpio_05.dtsi"
+          if [ -f "$TARGET_FILE" ]; then
+            sed -i 's/2301000/2405000/g' "$TARGET_FILE"
+            sed -i 's/1150000/1225000/g' "$TARGET_FILE"
           fi
 
       - name: Compile the Kernel
         run: |
           cd $GITHUB_WORKSPACE/kernel
           
-          # Environment variables for build
+          # Standard Android Build Variables
           export ARCH=arm64
           export SUBARCH=arm64
           export CROSS_COMPILE=aarch64-linux-gnu-
@@ -49,12 +50,11 @@ jobs:
           export LLVM_IAS=1
           export CLANG_TRIPLE=aarch64-linux-gnu-
           
-          # Use defconfig found dynamically
-          CONFIG_FILE=$(find arch/arm64/configs/ -name "*gta4xl*_defconfig" | head -n 1)
-          make ARCH=arm64 "$CONFIG_FILE"
+          # Force use of the exynos9611 target configuration
+          make ARCH=arm64 exynos9611_defconfig
           
-          # KCFLAGS forces the compiler to ignore modern strict standards
-          export KCFLAGS="-w -Wno-error -fno-integrated-as -std=gnu89"
+          # KCFLAGS to silence warnings and bypass errors
+          export KCFLAGS="-w -Wno-error -fno-integrated-as"
           
           # Build
           make -j$(nproc) ARCH=arm64
