@@ -19,13 +19,15 @@ jobs:
         run: |
           git clone --depth=1 -b lineage-23.2 https://github.com/LineageOS/android_kernel_samsung_gta4xl.git $GITHUB_WORKSPACE/kernel
 
-      - name: Apply Hotfixes for Android 16 Headers
+      - name: Patch Kernel Headers
         run: |
           cd $GITHUB_WORKSPACE/kernel
-          # Patch the nmi.h header error
+          # Fix the void void error
           sed -i 's/static inline void void sl_softirq_entry/static inline void sl_softirq_entry/g' include/linux/nmi.h
+          # Fix the missing ZONE_DMA definition by appending it if missing
+          echo "#define ZONE_DMA 0" >> include/linux/mmzone.h
 
-      - name: Inject Overclock & Thermal Bypasses
+      - name: Inject Overclock
         run: |
           cd $GITHUB_WORKSPACE/kernel
           DVFS_FILE=$(find arch/arm64/boot/dts -name "*dvfs*" -o -name "*exynos9611*" | head -n 1)
@@ -38,23 +40,21 @@ jobs:
         run: |
           cd $GITHUB_WORKSPACE/kernel
           
-          # Environment Setup
+          # Environment variables for build
           export ARCH=arm64
           export SUBARCH=arm64
           export CROSS_COMPILE=aarch64-linux-gnu-
           export CROSS_COMPILE_ARM32=arm-linux-gnueabi-
-          
-          # Android 16 Build Flags
           export LLVM=1
           export LLVM_IAS=1
           export CLANG_TRIPLE=aarch64-linux-gnu-
           
-          # Build Configuration
+          # Use defconfig found dynamically
           CONFIG_FILE=$(find arch/arm64/configs/ -name "*gta4xl*_defconfig" | head -n 1)
-          make ARCH=arm64 $CONFIG_FILE
+          make ARCH=arm64 "$CONFIG_FILE"
           
-          # Patch to ignore modern compiler warnings
-          export KCFLAGS="-w -Wno-error"
+          # KCFLAGS forces the compiler to ignore modern strict standards
+          export KCFLAGS="-w -Wno-error -fno-integrated-as -std=gnu89"
           
           # Build
           make -j$(nproc) ARCH=arm64
