@@ -19,12 +19,11 @@ jobs:
         run: |
           mkdir -p $GITHUB_WORKSPACE/toolchain
           cd $GITHUB_WORKSPACE/toolchain
-          # Using a high-performance, pre-compiled Clang toolchain optimized for Android kernel builds
-          curl -LO "https://github.com/kdrag0n/proton-clang/archive/refs/heads/master.zip"
-          unzip -q master.zip
-          # Move the contents out of the nested folder directly into the toolchain directory
-          mv proton-clang-master/* .
-          rm -rf proton-clang-master master.zip
+          # Pulls an official, pre-compiled release archive from kdrag0n's stable CDN assets
+          curl -LO "https://github.com/kdrag0n/proton-clang/releases/download/20210515/proton-clang-20210515.tar.gz"
+          # Extract and flatten the structure directly into the working directory
+          tar -xzf proton-clang-20210515.tar.gz --strip-components=1
+          rm proton-clang-20210515.tar.gz
 
       - name: Clone Kernel Source
         run: |
@@ -108,7 +107,8 @@ jobs:
             SUBARCH=arm64 \
             CC=clang \
             CROSS_COMPILE=aarch64-linux-gnu- \
-            KCFLAGS="-w" # Suppresses warnings so toolchain quirks don't halt compiling
+            CROSS_COMPILE_ARM32=arm-linux-gnueabi- \
+            KCFLAGS="-w"
 
       - name: Package Kernel Image
         run: |
