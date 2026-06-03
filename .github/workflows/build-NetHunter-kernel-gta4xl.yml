@@ -19,42 +19,45 @@ jobs:
         run: |
           git clone --depth=1 -b lineage-23.2 https://github.com/LineageOS/android_kernel_samsung_gta4xl.git $GITHUB_WORKSPACE/kernel
 
+      - name: Apply Hotfixes for Android 16 Headers
+        run: |
+          cd $GITHUB_WORKSPACE/kernel
+          # Patch the nmi.h header error
+          sed -i 's/static inline void void sl_softirq_entry/static inline void sl_softirq_entry/g' include/linux/nmi.h
+
       - name: Inject Overclock & Thermal Bypasses
         run: |
           cd $GITHUB_WORKSPACE/kernel
-          # List files to find the correct path for our next attempt
-          echo "Listing dts files to identify targets..."
-          find arch/arm64/boot/dts -name "*.dtsi" | head -n 20
-          
-          # Attempt to find the dvfs file using a broader pattern
           DVFS_FILE=$(find arch/arm64/boot/dts -name "*dvfs*" -o -name "*exynos9611*" | head -n 1)
-          
           if [ -f "$DVFS_FILE" ]; then
             sed -i 's/2301000/2405000/g' "$DVFS_FILE"
             sed -i 's/1150000/1225000/g' "$DVFS_FILE"
-            echo "Successfully patched $DVFS_FILE"
-          else
-            echo "DVFS file not found with current pattern, skipping..."
           fi
 
       - name: Compile the Kernel
         run: |
           cd $GITHUB_WORKSPACE/kernel
+          
+          # Environment Setup
           export ARCH=arm64
           export SUBARCH=arm64
           export CROSS_COMPILE=aarch64-linux-gnu-
           export CROSS_COMPILE_ARM32=arm-linux-gnueabi-
+          
+          # Android 16 Build Flags
           export LLVM=1
           export LLVM_IAS=1
+          export CLANG_TRIPLE=aarch64-linux-gnu-
           
-          # Use a direct path if defconfig is not found, or use a broad find
-          make gta4xl_defconfig || make defconfig
+          # Build Configuration
+          CONFIG_FILE=$(find arch/arm64/configs/ -name "*gta4xl*_defconfig" | head -n 1)
+          make ARCH=arm64 $CONFIG_FILE
           
-          # Disable problematic drivers
-          ./scripts/config --disable CONFIG_MEDIA_SUPPORT
+          # Patch to ignore modern compiler warnings
+          export KCFLAGS="-w -Wno-error"
           
           # Build
-          make -j$(nproc) KCFLAGS="-w"
+          make -j$(nproc) ARCH=arm64
 
       - name: Upload Artifact
         uses: actions/upload-artifact@v4
