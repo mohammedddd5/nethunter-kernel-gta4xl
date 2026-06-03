@@ -5,7 +5,7 @@ on:
 
 jobs:
   build:
-    runs-on: ubuntu-22.04 # <-- THIS FIXES THE .relr.dyn CRASH!
+    runs-on: ubuntu-22.04
     steps:
       - name: Checkout Repository
         uses: actions/checkout@v4
@@ -17,73 +17,62 @@ jobs:
 
       - name: Download Clang Compiler Toolchain
         run: |
-          # We use git clone instead of curl/tar to completely avoid extraction and gzip errors!
           git clone --depth=1 https://github.com/kdrag0n/proton-clang.git $GITHUB_WORKSPACE/toolchain
 
       - name: Clone Kernel Source
         run: |
           git clone --depth=1 -b lineage-21 https://github.com/LineageOS/android_kernel_samsung_gta4xl.git $GITHUB_WORKSPACE/kernel
 
-      - name: Inject Overclock & Overvolt Parameters
+      - name: Inject Overclock, Overvolt & Thermal Bypasses
         run: |
           cd $GITHUB_WORKSPACE/kernel
           
+          # Inject Overclock
           DVFS_FILE=$(find arch/arm64/boot/dts/ -name "*exynos9611*-dvfs.dtsi" -o -name "*9611*.dtsi" | head -n 1)
-          
           if [ -f "$DVFS_FILE" ]; then
-            echo "Modifying clock frequencies and voltage steps in: $DVFS_FILE"
             sed -i 's/khz = <2301000>/khz = <2405000>/g' "$DVFS_FILE"
             sed -i 's/volt = <1150000>/volt = <1225000>/g' "$DVFS_FILE"
             sed -i 's/opp-microvolt = <1150000>/opp-microvolt = <1225000>/g' "$DVFS_FILE"
-            echo "Successfully injected custom hardware profiles!"
-          else
-            echo "WARNING: Core DVFS device tree map not found via automation. Compiling with default fallback frequencies."
           fi
 
-      - name: Configure Kernel Flags (Strip Cameras & Enable Nethunter)
+          # Bypass Thermal Limits
+          find arch/arm64/boot/dts/ -name "*tmu*.dtsi" -o -name "*exynos9611*.dtsi" | while read file; do
+            if grep -q "thermal-zones" "$file"; then
+              sed -i 's/temperature = <[0-9]*>/temperature = <125000>/g' "$file"
+            fi
+          done
+
+      - name: Compile the Kernel
         run: |
           cd $GITHUB_WORKSPACE/kernel
           export PATH=$GITHUB_WORKSPACE/toolchain/bin:$PATH
           
+          # Clean environment before starting
+          make mrproper
+          
+          # Configure
           if [ -f "arch/arm64/configs/gta4xl_defconfig" ]; then
             make ARCH=arm64 SUBARCH=arm64 gta4xl_defconfig
-          elif [ -f "arch/arm64/configs/exynos9611-gta4xl_defconfig" ]; then
-            make ARCH=arm64 SUBARCH=arm64 exynos9611-gta4xl_defconfig
           else
-            ANY_DEFCONFIG=$(ls arch/arm64/configs/ | grep -i gta4xl | head -n 1)
-            make ARCH=arm64 SUBARCH=arm64 "$ANY_DEFCONFIG"
+            make ARCH=arm64 SUBARCH=arm64 exynos9611-gta4xl_defconfig
           fi
           
-          # Use scripts/config to completely disable camera, multimedia, and TV tuner subsystems
-          ./scripts/config --disable CONFIG_MEDIA_SUPPORT
-          ./scripts/config --disable CONFIG_MEDIA_CAMERA_SUPPORT
-          ./scripts/config --disable CONFIG_VIDEO_DEV
-          ./scripts/config --disable CONFIG_VIDEO_SAMSUNG_FIMC
+          # Disable problematic thermal and camera features
+          ./scripts/config --disable CONFIG_MEDIA_SUPPORT --disable CONFIG_MEDIA_CAMERA_SUPPORT --disable CONFIG_THERMAL_GOV_STEP_WISE
           
-          # Append NetHunter external Wi-Fi drivers and performance profiles
+          # Append NetHunter drivers
           cat <<EOT >> .config
           CONFIG_CPU_FREQ_DEFAULT_GOV_PERFORMANCE=y
-          CONFIG_SUBST_WCHAR=y
           CONFIG_NET_RADIO=y
           CONFIG_WIRELESS_EXT=y
-          CONFIG_WEXT_CORE=y
-          CONFIG_WEXT_PROC=y
-          CONFIG_WEXT_SPY=y
-          CONFIG_WEXT_PRIV=y
           CONFIG_CFG80211=y
           CONFIG_MAC80211=y
           CONFIG_MAC80211_RC_DEFAULT="minstrel_ht"
           CONFIG_ATH_CARDS=y
           CONFIG_ATH9K_HTC=y
-          CONFIG_ATH9K_HTC_DEBUGFS=y
           CONFIG_CARL9170=y
-          CONFIG_USB_NET_RNDIS_WLAN=y
           CONFIG_RT2X00=y
           CONFIG_RT2800USB=y
-          CONFIG_RT2800USB_RT35XX=y
-          CONFIG_RT2800USB_RT53XX=y
-          CONFIG_RT2800USB_RT55XX=y
-          CONFIG_RT2800USB_UNKNOWN=y
           CONFIG_RTL_CARDS=y
           CONFIG_RTL8187=y
           CONFIG_RTL8192CU=y
@@ -91,21 +80,18 @@ jobs:
           EOT
           
           make ARCH=arm64 SUBARCH=arm64 olddefconfig
-
-      - name: Compile the Kernel
-        run: |
-          cd $GITHUB_WORKSPACE/kernel
-          export PATH=$GITHUB_WORKSPACE/toolchain/bin:$PATH
           
-          make -j$(nproc --all) \
+          # Build with -j4 for speed while keeping memory safe
+          make -j4 \
             ARCH=arm64 \
             SUBARCH=arm64 \
             CC=clang \
             CROSS_COMPILE=aarch64-linux-gnu- \
             CROSS_COMPILE_ARM32=arm-linux-gnueabi- \
-            KCFLAGS="-w"
+            KCFLAGS="-w" \
+            LDFLAGS="-O2"
 
-      - name: Package Kernel Image
+      - name: Package & Upload
         run: |
           cd $GITHUB_WORKSPACE
           mkdir -p output
@@ -114,5 +100,5 @@ jobs:
       - name: Upload Kernel Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: Overclocked-Nethunter-Kernel
+          name: Final-Kernel-Build
           path: output/*
