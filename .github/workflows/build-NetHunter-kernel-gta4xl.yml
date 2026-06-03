@@ -19,10 +19,12 @@ jobs:
         run: |
           mkdir -p $GITHUB_WORKSPACE/toolchain
           cd $GITHUB_WORKSPACE/toolchain
-          # Pulls a specific static snapshot from AOSP to prevent gitiles server-side compression timeouts
-          curl -LO "https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86/+archive/9be4b370e7e1f4862f917537bc28516f4370f607.tar.gz"
-          tar -xzf 9be4b370e7e1f4862f917537bc28516f4370f607.tar.gz
-          rm 9be4b370e7e1f4862f917537bc28516f4370f607.tar.gz
+          # Using a high-performance, pre-compiled Clang toolchain optimized for Android kernel builds
+          curl -LO "https://github.com/kdrag0n/proton-clang/archive/refs/heads/master.zip"
+          unzip -q master.zip
+          # Move the contents out of the nested folder directly into the toolchain directory
+          mv proton-clang-master/* .
+          rm -rf proton-clang-master master.zip
 
       - name: Clone Kernel Source
         run: |
@@ -105,9 +107,8 @@ jobs:
             ARCH=arm64 \
             SUBARCH=arm64 \
             CC=clang \
-            CLANG_TRIPLE=aarch64-linux-gnu- \
             CROSS_COMPILE=aarch64-linux-gnu- \
-            KCFLAGS="-w" # Suppresses minor toolchain warnings to keep the build safe from syntax-blockers
+            KCFLAGS="-w" # Suppresses warnings so toolchain quirks don't halt compiling
 
       - name: Package Kernel Image
         run: |
